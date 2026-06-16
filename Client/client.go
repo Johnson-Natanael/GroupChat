@@ -1,41 +1,61 @@
 package main
 
 import (
-    "bufio"
-    "fmt"
-    "net"
-    "os"
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+	"strings"
 )
 
 func main() {
-    conn, err := net.Dial("tcp", ":9090")
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "Tidak dapat terhubung: %v\n", err)
-        os.Exit(1)
-    }
-    defer conn.Close()
-    fmt.Println("Terhubung ke server!")
+	conn, err := net.Dial("tcp", ":9090")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Tidak dapat terhubung: %v\n", err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+	fmt.Println("Terhubung ke server!")
 
-    // Goroutine: terima pesan dari server
-    go func() {
-        reader := bufio.NewReader(conn)
-        for {
-            line, err := reader.ReadString('\n')
-            if err != nil {
-                fmt.Println("[Koneksi terputus]")
-                os.Exit(0)
-            }
-            fmt.Print(line)
-        }
-    }()
+	serverReader := bufio.NewReader(conn)
+	localReader := bufio.NewReader(os.Stdin)
 
-    // Loop utama: kirim pesan ke server
-    reader := bufio.NewReader(os.Stdin)
-    for {
-        text, err := reader.ReadString('\n')
-        if err != nil {
-            break
-        }
-        fmt.Fprintln(conn, text)
-    }
+	// Fase login
+	for {
+		line, _ := serverReader.ReadString('\n')
+		msg := strings.TrimRight(line, "\r\n")
+		fmt.Println(msg)
+
+		if strings.Contains(msg, "Masukkan username") {
+			fmt.Print(">> ")
+			input, _ := localReader.ReadString('\n')
+			fmt.Fprintln(conn, strings.TrimSpace(input))
+		}
+		if strings.Contains(msg, "Selamat datang") {
+			break
+		}
+	}
+
+	// Goroutine: terima pesan
+	go func() {
+		for {
+			line, err := serverReader.ReadString('\n')
+			if err != nil {
+				fmt.Println("[Koneksi terputus]")
+				os.Exit(0)
+			}
+			fmt.Print("\r" + strings.TrimRight(line, "\r\n") + "\n> ")
+		}
+	}()
+
+	// Loop kirim pesan
+	fmt.Print("> ")
+	for {
+		text, err := localReader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		fmt.Fprintln(conn, strings.TrimSpace(text))
+		fmt.Print("> ")
+	}
 }
