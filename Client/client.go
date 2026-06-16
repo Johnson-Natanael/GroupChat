@@ -7,54 +7,39 @@ import (
 	"os"
 )
 
-// menangani pembacaan pesan dari server secara paralel
-func readFromServer(conn net.Conn) {
-	connReader := bufio.NewReader(conn)
-	for {
-		message, err := connReader.ReadString('\n')
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nConnection lost from server\n")
-			os.Exit(1)
-		}
-		fmt.Print(message)
-	}
-}
-
 func main() {
-	//dial ke server
 	conn, err := net.Dial("tcp", ":9090")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot connect to server\n")
+		fmt.Fprintf(os.Stderr, "Tidak dapat terhubung: %v\n", err)
 		os.Exit(1)
-	} else {
-		fmt.Println("Connected to serve")
 	}
 	defer conn.Close()
+	fmt.Println("Terhubung ke server!")
 
-	//jalankan pembacaan pesan dari server secara paralel menggunakan goroutine
-	go readFromServer(conn)
+	// Goroutine: terima pesan dari server
+	go func() {
+		reader := bufio.NewReader(conn)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Println("[Koneksi terputus]")
+				os.Exit(0)
+			}
+			fmt.Print(line)
+		}
+	}()
 
-	localReader := bufio.NewReader(os.Stdin)
-
-	fmt.Print("Enter username: ")
-	username, err := localReader.ReadString('\n')
-	if err != nil {
-		os.Exit(1)
-	}
-
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Masukkan username: ")
+	username, _ := reader.ReadString('\n')
 	fmt.Fprint(conn, username)
 
+	// Loop utama: kirim pesan ke server
 	for {
-		message, err := localReader.ReadString('\n')
+		text, err := reader.ReadString('\n')
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Cannot read the message\n")
 			break
 		}
-
-		_, err = conn.Write([]byte(message))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to send the message\n")
-			break
-		}
+		fmt.Fprint(conn, text)
 	}
 }
