@@ -32,9 +32,13 @@ func main() {
 			fmt.Fprintln(conn, strings.TrimSpace(input))
 		}
 		if strings.Contains(msg, "Selamat datang") {
+			// Baca satu baris lagi (baris info perintah)
+			extra, _ := serverReader.ReadString('\n')
+			fmt.Println(strings.TrimRight(extra, "\r\n"))
 			break
 		}
 	}
+	fmt.Println("Ketik pesan, /join <room>, /leave, atau /quit.")
 
 	// Goroutine: terima pesan dari server
 	go func() {
@@ -55,7 +59,12 @@ func main() {
 		if err != nil {
 			break
 		}
-		fmt.Fprintln(conn, strings.TrimSpace(text))
+		text = strings.TrimSpace(text)
+		fmt.Fprintln(conn, text)
+		if text == "/quit" {
+			fmt.Println("Keluar dari chat. Sampai jumpa!")
+			return
+		}
 		fmt.Print("> ")
 	}
 }

@@ -13,6 +13,7 @@ type Client struct {
 	conn     net.Conn
 	writer   *bufio.Writer
 	username string
+	room     string // room saat ini, default "lobby"
 }
 
 type Server struct {
@@ -35,14 +36,20 @@ func (s *Server) isUsernameTaken(username string) bool {
 	return false
 }
 
-func (s *Server) broadcast(msg string, exclude net.Conn) {
+func (s *Server) broadcastRoom(room, msg string, exclude net.Conn) {
+	// Kumpulkan penerima di bawah lock, kirim di luar lock
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	targets := make([]*Client, 0)
 	for _, c := range s.clients {
-		if c.conn != exclude {
-			fmt.Fprint(c.writer, msg)
-			c.writer.Flush()
+		if c.conn != exclude && c.room == room {
+			targets = append(targets, c)
 		}
+	}
+	s.mu.Unlock()
+
+	for _, c := range targets {
+		fmt.Fprint(c.writer, msg)
+		c.writer.Flush()
 	}
 }
 
@@ -77,30 +84,78 @@ func (s *Server) handleClient(conn net.Conn) {
 		break
 	}
 
-	client := &Client{conn: conn, username: username, writer: writer}
+	client := &Client{conn: conn, username: username, writer: writer, room: "lobby"}
 	s.mu.Lock()
 	s.clients[conn] = client
 	s.mu.Unlock()
 
-	fmt.Fprintln(writer, "[SERVER] Selamat datang, "+username+"!")
+	fmt.Fprintln(writer, "[SERVER] Selamat datang, "+username+"! Anda berada di lobby.")
+	fmt.Fprintln(writer, "[SERVER] Perintah: /join <room>  /leave  /quit")
 	writer.Flush()
-	
-	s.broadcast(fmt.Sprintf("[SERVER] %s bergabung ke chat\n", client.username), conn)
-	
+
+	s.broadcastRoom("lobby", fmt.Sprintf("[SERVER] %s bergabung ke lobby\n", username), conn)
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			break
 		}
-		formattedMsg := fmt.Sprintf("[%s]: %s", client.username, line)
-		s.broadcast(formattedMsg, conn)
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		switch {
+		case line == "/quit":
+			goto disconnect
+
+		case strings.HasPrefix(line, "/join "):
+			newRoom := strings.TrimSpace(strings.TrimPrefix(line, "/join "))
+			if newRoom == "" {
+				fmt.Fprintln(writer, "[SERVER] Penggunaan: /join <nama_room>")
+				writer.Flush()
+				continue
+			}
+			oldRoom := client.room
+			if oldRoom == newRoom {
+				fmt.Fprintln(writer, "[SERVER] Anda sudah berada di room '"+newRoom+"'.")
+				writer.Flush()
+				continue
+			}
+			s.broadcastRoom(oldRoom, fmt.Sprintf("[SERVER] %s meninggalkan %s\n", username, oldRoom), conn)
+			s.mu.Lock()
+			client.room = newRoom
+			s.mu.Unlock()
+			fmt.Fprintln(writer, "[SERVER] Anda bergabung ke room '"+newRoom+"'.")
+			writer.Flush()
+			s.broadcastRoom(newRoom, fmt.Sprintf("[SERVER] %s bergabung ke %s\n", username, newRoom), conn)
+
+		case line == "/leave":
+			if client.room == "lobby" {
+				fmt.Fprintln(writer, "[SERVER] Anda sudah berada di lobby.")
+				writer.Flush()
+				continue
+			}
+			oldRoom := client.room
+			s.broadcastRoom(oldRoom, fmt.Sprintf("[SERVER] %s meninggalkan %s\n", username, oldRoom), conn)
+			s.mu.Lock()
+			client.room = "lobby"
+			s.mu.Unlock()
+			fmt.Fprintln(writer, "[SERVER] Anda kembali ke lobby.")
+			writer.Flush()
+			s.broadcastRoom("lobby", fmt.Sprintf("[SERVER] %s kembali ke lobby\n", username), conn)
+
+		default:
+			msg := fmt.Sprintf("[%s]: %s\n", username, line)
+			s.broadcastRoom(client.room, msg, conn)
+		}
 	}
 
+disconnect:
 	s.mu.Lock()
 	delete(s.clients, conn)
 	s.mu.Unlock()
-	s.broadcast(fmt.Sprintf("[SERVER] %s keluar dari chat\n", client.username), nil)
+	s.broadcastRoom(client.room, fmt.Sprintf("[SERVER] %s keluar dari chat\n", username), nil)
 }
 
 func main() {
