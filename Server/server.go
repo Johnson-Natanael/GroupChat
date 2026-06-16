@@ -1,76 +1,114 @@
 package main
 
 import (
-    "bufio"
-    "fmt"
-    "net"
-    "os"
-    "sync"
+	"bufio"
+	"fmt"
+	"net"
+	"os"
+	"strings"
+	"sync"
 )
 
 type Client struct {
-    conn   net.Conn
-    writer *bufio.Writer
+	conn     net.Conn
+	writer   *bufio.Writer
+	username string
 }
 
 type Server struct {
-    mu      sync.Mutex
-    clients map[net.Conn]*Client
+	mu      sync.Mutex
+	clients map[net.Conn]*Client
 }
 
 func NewServer() *Server {
-    return &Server{clients: make(map[net.Conn]*Client)}
+	return &Server{clients: make(map[net.Conn]*Client)}
 }
 
 func (s *Server) broadcast(msg string, exclude net.Conn) {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    for _, c := range s.clients {
-        if c.conn != exclude {
-            fmt.Fprintln(c.writer, msg)
-            c.writer.Flush()
-        }
-    }
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.clients {
+		if c.conn != exclude {
+			fmt.Fprint(c.writer, msg)
+			c.writer.Flush()
+		}
+	}
 }
 
 func (s *Server) handleClient(conn net.Conn) {
-    defer conn.Close()
-    writer := bufio.NewWriter(conn)
-    reader := bufio.NewReader(conn)
+	defer conn.Close()
+	writer := bufio.NewWriter(conn)
+	reader := bufio.NewReader(conn)
 
-    s.mu.Lock()
-    s.clients[conn] = &Client{conn: conn, writer: writer}
-    s.mu.Unlock()
+	for {
+		nameInput, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		nameInput = strings.TrimSpace(nameInput)
 
-    for {
-        line, err := reader.ReadString('\n')
-        if err != nil {
-            break
-        }
-        s.broadcast(line, conn)
-    }
+		if nameInput == "" {
+			fmt.Fprint(writer, "Username tidak boleh kosong")
+			writer.Flush()
+			continue
+		}
 
-    s.mu.Lock()
-    delete(s.clients, conn)
-    s.mu.Unlock()
+		s.mu.Lock()
+		taken := false
+
+		for _, c := range s.clients {
+			if c.username == nameInput {
+				taken = true
+				break
+			}
+		}
+
+		if !taken {
+			s.clients[conn] = &Client{conn: conn, writer: writer, username: nameInput}
+			s.mu.Unlock()
+			writer.Flush()
+			break
+		}
+		s.mu.Unlock()
+		fmt.Fprintln(writer, "Username sudah digunakan")
+		writer.Flush()
+	}
+
+	client := s.clients[conn]
+
+	s.broadcast(fmt.Sprintf("%s bergabung ke chat\n", client.username), conn)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		formattedMsg := fmt.Sprintf("[%s]: %s", client.username, line)
+		s.broadcast(formattedMsg, conn)
+	}
+
+	s.mu.Lock()
+	delete(s.clients, conn)
+	s.mu.Unlock()
+	s.broadcast(fmt.Sprintf("%s keluar dari chat\n", client.username), nil)
 }
 
 func main() {
-    ln, err := net.Listen("tcp", ":9090")
-    if err != nil {
-        fmt.Fprintf(os.Stderr, "Gagal mendengarkan: %v\n", err)
-        os.Exit(1)
-    }
-    defer ln.Close()
-    fmt.Println("[SERVER] Berjalan di :9090")
+	ln, err := net.Listen("tcp", ":9090")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Gagal mendengarkan: %v\n", err)
+		os.Exit(1)
+	}
+	defer ln.Close()
+	fmt.Println("[SERVER] Berjalan di :9090")
 	fmt.Println("[SERVER] Menunggu koneksi...")
 
-    srv := NewServer()
-    for {
-        conn, err := ln.Accept()
-        if err != nil {
-            continue
-        }
-        go srv.handleClient(conn)
-    }
+	srv := NewServer()
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go srv.handleClient(conn)
+	}
 }
